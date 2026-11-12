@@ -188,10 +188,35 @@ func _shortest_steps(from_id: int, to_id: int) -> int:
 	return -1
 
 
+# Shadow Realm and Teleport spaces can be landed on but never walked through:
+# one traps you, the other throws you somewhere else. So the Crown must be
+# reachable from Start without stepping on either of them along the way.
+func _walkable_steps_to_crown() -> int:
+	var dist := {start_id: 0}
+	var queue: Array = [start_id]
+	while not queue.is_empty():
+		var current: int = queue.pop_front()
+		var type_name: String = spaces[current]["type"]
+		if current != start_id and (type_name == "Shadow Realm" or type_name == "Teleport"):
+			continue
+		for next_id in _conns(current):
+			if not dist.has(next_id):
+				dist[next_id] = int(dist[current]) + 1
+				queue.append(next_id)
+	return int(dist.get(crown_id, -1))
+
+
+func _can_walk_on_from(id: int) -> bool:
+	var type_name: String = spaces[id]["type"]
+	return type_name != "Shadow Realm" and type_name != "Teleport"
+
+
 func _is_valid() -> bool:
 	if _reachable_from(start_id).size() != SPACE_COUNT:
 		return false
 	if _shortest_steps(start_id, crown_id) < MIN_STEPS_TO_CROWN:
+		return false
+	if _walkable_steps_to_crown() < MIN_STEPS_TO_CROWN:
 		return false
 	var incoming := 0
 	for s in spaces:
@@ -283,7 +308,7 @@ func _connect_crown() -> void:
 			continue
 		var dir := _direction(id, crown_id)
 		if dir != "" and not _has_connection_in_direction(id, dir) \
-				and _conns(id).size() < MAX_CONNECTIONS:
+				and _conns(id).size() < MAX_CONNECTIONS and _can_walk_on_from(id):
 			candidates.append(id)
 
 	if not candidates.is_empty():
@@ -300,7 +325,7 @@ func _connect_crown() -> void:
 	_shuffle(all_spaces)
 	for id in all_spaces:
 		var dir := _direction(id, crown_id)
-		if dir == "":
+		if dir == "" or not _can_walk_on_from(id):
 			continue
 		for conn in _conns(id).duplicate():
 			if _direction(id, conn) == dir:

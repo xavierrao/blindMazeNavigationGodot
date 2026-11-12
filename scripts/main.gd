@@ -23,6 +23,8 @@ var _board: BoardView
 var _panel: VBoxContainer
 var _turn_label: Label
 var _players_label: Label
+var _seed_label: Label
+var _seed_edit: LineEdit
 var _pad_buttons := {}   # direction name -> Button
 var _end_button: Button
 var _shop_button: Button
@@ -46,9 +48,7 @@ func _ready() -> void:
 	_board.tile_clicked.connect(_on_tile_clicked)
 	resized.connect(_update_layout)
 
-	state.setup(PLAYER_NAMES)
-	_on_message("Game start! %s goes first." % state.current()["name"])
-	_refresh()
+	_start_new_game()
 	_update_layout()
 
 
@@ -109,6 +109,10 @@ func _build_ui() -> void:
 	_players_label.add_theme_color_override("font_color", Color.BLACK)
 	_panel.add_child(_players_label)
 
+	_seed_label = Label.new()
+	_seed_label.add_theme_color_override("font_color", Color(0.35, 0.35, 0.35))
+	_panel.add_child(_seed_label)
+
 	var pad := GridContainer.new()
 	pad.columns = 3
 	pad.add_theme_constant_override("h_separation", 6)
@@ -166,6 +170,18 @@ func _build_ui() -> void:
 	_log_label.add_theme_color_override("font_color", Color(0.15, 0.15, 0.15))
 	_panel.add_child(_log_label)
 
+	var seed_row := HBoxContainer.new()
+	seed_row.add_theme_constant_override("separation", 8)
+	_panel.add_child(seed_row)
+	_seed_edit = LineEdit.new()
+	_seed_edit.placeholder_text = "Seed (blank = random)"
+	_seed_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	seed_row.add_child(_seed_edit)
+	var new_game := Button.new()
+	new_game.text = "New Game"
+	new_game.pressed.connect(_start_new_game)
+	seed_row.add_child(new_game)
+
 	var peek := Button.new()
 	peek.text = "Peek at full map (debug)"
 	peek.pressed.connect(_on_peek_pressed)
@@ -194,6 +210,7 @@ func _refresh() -> void:
 		return
 
 	_board.queue_redraw()
+	_seed_label.text = "Seed: %d  (type it below to replay this game)" % state.game_seed
 
 	var current_player := state.current()
 	_turn_label.text = "%s's turn  (Round %d)" % [current_player["name"], state.round_number]
@@ -278,11 +295,24 @@ func _show_win() -> void:
 	_show_map_overlay("%s wins! - Final Map" % winner_name, "New Game", func() -> void:
 		_overlay.queue_free()
 		_overlay = null
-		_log.clear()
-		_held_messages.clear()
-		state.setup(PLAYER_NAMES)
-		_on_message("New game! %s goes first." % state.current()["name"])
-		_refresh())
+		_start_new_game())
+
+
+# Starts a fresh game. A number in the seed box replays that seed; blank is random.
+func _start_new_game() -> void:
+	for popup in [_wheel_popup, _shop_popup]:
+		if is_instance_valid(popup):
+			popup.queue_free()
+	_wheel_popup = null
+	_shop_popup = null
+	_log.clear()
+	_held_messages.clear()
+	var seed_value := -1
+	if _seed_edit.text.strip_edges().is_valid_int():
+		seed_value = absi(int(_seed_edit.text.strip_edges()))
+	state.setup(PLAYER_NAMES, 12, seed_value)
+	_on_message("Game start! Seed %d. %s goes first." % [state.game_seed, state.current()["name"]])
+	_refresh()
 
 
 func _on_peek_pressed() -> void:

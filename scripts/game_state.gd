@@ -16,8 +16,9 @@ signal message(text: String)   # something worth telling the players
 signal wheel_spun(wheel_name: String, slices: Array, index: int)
 
 const GRID_SIZE := 5
-const CROWN_GOLD_REQUIRED := 5   # gold needed (and paid) to win at the Crown
-const START_GOLD_BONUS := 1      # gold for landing on the Start space
+const CROWN_GOLD_REQUIRED := 10      # gold needed (and paid) to win at the Crown
+const START_GOLD_BONUS := 1          # gold for landing on the Start space...
+const START_BONUS_GOLD_LIMIT := 3    # ...but only if you have FEWER than this much gold
 
 ## Memory Mode (default): a space is face-up only while a player stands on it.
 ## Turn it off and spaces stay face-up once they have been visited.
@@ -32,18 +33,34 @@ var discovered := {}     # space id -> true, for when Memory Mode is off
 var pending := {}        # {"kind": "wheel", "wheel": "good"|"bad"|"shadow"} or {}
 var winner := -1         # player index once someone wins
 var start_id := 12
-var rng := RandomNumberGenerator.new()
+
+## One master seed drives several independent random streams, so changing (say) a
+## wheel never changes the map you get from the same seed.
+var game_seed := 0
+var rng := RandomNumberGenerator.new()          # "events": wheel spins, teleports, other results
+var shop_rng := RandomNumberGenerator.new()     # "shops": stock and placement (used by shops v2)
+var goblin_rng := RandomNumberGenerator.new()   # "goblin": spawns, scatters, ties (used by the Goblin)
+
+## Counters for the bot simulator and balance checks.
+var stats := {}
 
 
 func setup(player_names: Array, start_space_id: int = 12, seed_value: int = -1) -> bool:
 	start_id = start_space_id
-	spaces = GridGenerator.new().create_grid(start_id, seed_value)
+	if seed_value >= 0:
+		game_seed = seed_value
+	else:
+		var seeder := RandomNumberGenerator.new()
+		seeder.randomize()
+		game_seed = seeder.randi_range(100000, 999999)   # short enough to read out to a friend
+	rng.seed = derive_seed(game_seed, "events")
+	shop_rng.seed = derive_seed(game_seed, "shops")
+	goblin_rng.seed = derive_seed(game_seed, "goblin")
+
+	spaces = GridGenerator.new().create_grid(start_id, derive_seed(game_seed, "map"))
 	if spaces.is_empty():
 		return false
-	if seed_value >= 0:
-		rng.seed = seed_value + 1
-	else:
-		rng.randomize()
+	stats = {"gold_gained": {}, "gold_lost": {}, "landings": {}, "shadow_spins": 0, "turns": 0}
 
 	players.clear()
 	for player_name in player_names:
@@ -169,9 +186,10 @@ func spin() -> bool:
 	has_moved = true   # spinning uses up the turn's move/spin
 	if wheel_name == "shadow":
 		current()["shadow_spins"] = int(current()["shadow_spins"]) + 1
+		stats["shadow_spins"] = int(stats["shadow_spins"]) + 1
 
 	wheel_spun.emit(wheel_name, slices, index)
-	_apply_slice(current_player, slice)
+	_apply_slice(current_player, slice, wheel_name)
 	changed.emit()
 	return true
 
@@ -192,6 +210,7 @@ func buy(item_id: String) -> bool:
 func end_turn() -> bool:
 	if not can_end_turn():
 		return false
+	stats["turns"] = int(stats["turns"]) + 1
 	current_player = (current_player + 1) % players.size()
 	if current_player == 0:
 		round_number += 1
@@ -214,14 +233,19 @@ func _land(player_index: int, target: int, prefix: String) -> void:
 	discovered[target] = true
 
 	var type_name := space_type(target)
+	_count("landings", type_name, 1)
 	var named := type_name == "Start" or type_name == "Crown"
 	message.emit("%slanded on %s %s%s." % [
 		prefix, "the" if named else "a", type_name, "" if named else " space"])
 
 	match type_name:
 		"Start":
-			_add_gold(player_index, START_GOLD_BONUS)
-			message.emit("%s gains %d gold from Start." % [player["name"], START_GOLD_BONUS])
+			if int(player["gold"]) < START_BONUS_GOLD_LIMIT:
+				var gained := _add_gold(player_index, START_GOLD_BONUS, "start")
+				message.emit("%s gains %d gold from Start." % [player["name"], gained])
+			else:
+				message.emit("%s has %d gold or more, so Start gives no bonus." % [
+					player["name"], START_BONUS_GOLD_LIMIT])
 		"Good":
 			pending = {"kind": "wheel", "wheel": "good"}
 		"Bad":
@@ -239,15 +263,17 @@ func _land(player_index: int, target: int, prefix: String) -> void:
 			message.emit("Combat isn't built yet - nothing happens.")
 
 
-# Random non-adjacent space. Never another Teleport (no chains) and never the
-# Crown (no accidental instant wins). Its effect then happens as normal.
+# Random space MORE THAN ONE connection step away. Never another Teleport (no
+# chains) and never the Crown (no accidental instant wins). Its effect then
+# happens as normal.
 func _teleport(player_index: int) -> void:
 	var player: Dictionary = players[player_index]
 	var from: int = player["position"]
+	var steps := steps_from(from)
 	var options: Array = []
 	for space in spaces:
 		var id: int = space["id"]
-		if distance(from, id) > 1 and space["type"] != "Crown" and space["type"] != "Teleport":
+		if int(steps.get(id, 99)) > 1 and space["type"] != "Crown" and space["type"] != "Teleport":
 			options.append(id)
 	if options.is_empty():
 		message.emit("The teleporter fizzles.")
@@ -268,20 +294,32 @@ func _check_crown(player_index: int) -> void:
 			CROWN_GOLD_REQUIRED, player["name"], player["gold"]])
 
 
-func _add_gold(player_index: int, amount: int) -> void:
+# Changes a player's gold (never below 0) and returns how much it really changed by.
+# `source` is only used for the statistics ("start", "good", "bad", ...).
+func _add_gold(player_index: int, amount: int, source: String) -> int:
 	var player: Dictionary = players[player_index]
-	player["gold"] = maxi(0, int(player["gold"]) + amount)
+	var before: int = player["gold"]
+	player["gold"] = maxi(0, before + amount)
+	var change: int = int(player["gold"]) - before
+	if change > 0:
+		_count("gold_gained", source, change)
+	elif change < 0:
+		_count("gold_lost", source, -change)
+	return change
+
+
+func _count(group: String, key: String, amount: int) -> void:
+	var counters: Dictionary = stats[group]
+	counters[key] = int(counters.get(key, 0)) + amount
 
 
 # What a wheel slice does.
-func _apply_slice(player_index: int, slice: Dictionary) -> void:
+func _apply_slice(player_index: int, slice: Dictionary, wheel_name: String) -> void:
 	var player: Dictionary = players[player_index]
 	var who: String = player["name"]
 	match slice["effect"]:
 		"gold":
-			var before: int = player["gold"]
-			_add_gold(player_index, slice["amount"])
-			var change: int = int(player["gold"]) - before
+			var change := _add_gold(player_index, slice["amount"], wheel_name)
 			if change > 0:
 				message.emit("%s gains %d gold." % [who, change])
 			elif change < 0:
@@ -374,3 +412,27 @@ static func distance(a: int, b: int) -> int:
 	var dr := absi(floori(a / float(GRID_SIZE)) - floori(b / float(GRID_SIZE)))
 	var dc := absi((a % GRID_SIZE) - (b % GRID_SIZE))
 	return maxi(dr, dc)
+
+
+## How many connection steps from `origin` to every reachable space
+## ({space id: steps}). A long-distance link counts as one step.
+func steps_from(origin: int) -> Dictionary:
+	var steps := {origin: 0}
+	var queue: Array = [origin]
+	while not queue.is_empty():
+		var current: int = queue.pop_front()
+		for next_id in spaces[current]["connections"]:
+			if not steps.has(next_id):
+				steps[next_id] = int(steps[current]) + 1
+				queue.append(next_id)
+	return steps
+
+
+## Turns the master seed into a separate seed for each random stream. Uses a
+## simple fixed formula (not Godot's hash()) so the same seed gives the same
+## game on every device and every future Godot version.
+static func derive_seed(master_seed: int, stream_name: String) -> int:
+	var hash_value := 2166136261
+	for byte in ("%d:%s" % [master_seed, stream_name]).to_utf8_buffer():
+		hash_value = ((hash_value ^ int(byte)) * 16777619) & 0xFFFFFFFF
+	return hash_value
