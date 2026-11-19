@@ -48,6 +48,7 @@ var title := "Blind Crown Quest - Final Map"
 
 var _spaces: Array = []
 var _players: Array = []
+var _goblin_space := -1
 
 # Layout values recalculated on every draw.
 var _font: Font
@@ -61,9 +62,10 @@ func _ready() -> void:
 	resized.connect(queue_redraw)
 
 
-func show_map(spaces: Array, players: Array = [], fade_in: bool = true) -> void:
+func show_map(spaces: Array, players: Array = [], fade_in: bool = true, goblin_space: int = -1) -> void:
 	_spaces = spaces
 	_players = players
+	_goblin_space = goblin_space
 	queue_redraw()
 	if fade_in:
 		modulate.a = 0.0
@@ -105,6 +107,7 @@ func _draw() -> void:
 
 	var curve_labels := _draw_connections()
 	_draw_nodes()
+	_draw_goblin()
 	_draw_curve_labels(curve_labels)
 	_draw_players()
 
@@ -224,6 +227,17 @@ func _draw_nodes() -> void:
 		_draw_text_centered(center, str(id), int(_fs * 1.15), text_color)
 
 
+# Where the Goblin ended up (only shown here - never on the playing board).
+func _draw_goblin() -> void:
+	if _goblin_space < 0:
+		return
+	var center := _center(_goblin_space) + Vector2(-1.0, -1.0) * _cell * 0.24
+	var radius := _fs * 0.9
+	draw_circle(center, radius, Color("#3C8D2F"))
+	draw_arc(center, radius, 0.0, TAU, 24, Color.BLACK, 2.0, true)
+	_draw_text_centered(center, "G", int(_fs * 1.0), Color.WHITE)
+
+
 func _draw_players() -> void:
 	var marker_radius := _cell * 0.09
 	# Count players per space so shared spaces can spread their markers out.
@@ -269,6 +283,9 @@ func _draw_legend(rect: Rect2, columns: int) -> void:
 			"label": str(player.get("name", "Player %d" % (i + 1))).left(12),
 		})
 
+	if _goblin_space >= 0:
+		items.append({"kind": "goblin", "color": Color("#3C8D2F"), "label": "Goblin"})
+
 	_draw_box(rect, Color(1, 1, 1, 0.85), Color(0.75, 0.75, 0.75), 6, 1)
 	var pad := _fs * 0.8
 	draw_string(_font, rect.position + Vector2(pad, pad + _font.get_ascent(_fs)),
@@ -302,6 +319,9 @@ func _draw_legend(rect: Rect2, columns: int) -> void:
 				draw_line(dash_a, dash_a + Vector2(icon_r * 0.6, 0), color, 2.5, true)
 				draw_line(dash_a + Vector2(icon_r * 1.0, 0), dash_a + Vector2(icon_r * 1.6, 0),
 					color, 2.5, true)
+			"goblin":
+				draw_circle(icon_center, icon_r, color)
+				draw_arc(icon_center, icon_r, 0.0, TAU, 24, Color.BLACK, 1.5, true)
 			_:
 				_draw_marker(icon_center, icon_r * 0.8, int(kind.right(1)), color)
 

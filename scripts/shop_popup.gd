@@ -1,14 +1,17 @@
 class_name ShopPopup
 extends Control
-## Pop-up shop for the current player. Reads the item list from ItemData and the
-## rules (cost, limits, being on a Shop space) from GameState. Set `state`
-## before adding it to the scene. Emits `closed` when the player leaves.
+## Pop-up shop for the current player: buy items and sell items back. Reads the
+## item list from ItemData and every rule (cost, hand limit, being on a Shop
+## space) from GameState. Set `state` before adding it to the scene. Emits
+## `closed` when the player leaves.
+## Each Shop space has its own items and stock (see ShopBuilder).
 
 signal closed
 
 var state: GameState
 
 var _gold_label: Label
+var _hand_label: Label
 var _list: VBoxContainer
 var _status: Label
 
@@ -43,9 +46,12 @@ func _ready() -> void:
 
 	_gold_label = Label.new()
 	box.add_child(_gold_label)
+	_hand_label = Label.new()
+	box.add_child(_hand_label)
 
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(460, 300)
+	scroll.custom_minimum_size = Vector2(530, 300)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	box.add_child(scroll)
 	_list = VBoxContainer.new()
 	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -71,41 +77,104 @@ func _rebuild() -> void:
 	for child in _list.get_children():
 		_list.remove_child(child)
 		child.queue_free()
-	_gold_label.text = "%s - Gold: %d" % [state.current()["name"], state.current()["gold"]]
+	var player := state.current()
+	_gold_label.text = "%s - Gold: %d" % [player["name"], player["gold"]]
+	_hand_label.text = "Hand: %d/%d items" % [player["hand"].size(), GameState.HAND_LIMIT]
 
-	for item in ItemData.ITEMS:
-		var item_id: String = item["id"]
-		var bought: int = state.current()["purchases"].get(item_id, 0)
-		var limit: int = item["max"]
-		var limit_text := "%d/%d bought" % [bought, limit] if limit >= 0 else "%d bought" % bought
+	_list.add_child(_heading("For sale here"))
+	for listing in state.shop_listing():
+		_list.add_child(_buy_row(listing))
 
-		var row := HBoxContainer.new()
-		row.add_theme_constant_override("separation", 10)
-		_list.add_child(row)
-
-		var info := VBoxContainer.new()
-		info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(info)
-		var name_label := Label.new()
-		name_label.text = "%s  -  %d gold  (%s)" % [item["name"], item["cost"], limit_text]
-		info.add_child(name_label)
-		var description := Label.new()
-		description.text = item["description"]
-		description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		description.custom_minimum_size = Vector2(280, 0)
-		description.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
-		info.add_child(description)
-
-		var buy := Button.new()
-		buy.text = "Buy"
-		buy.custom_minimum_size = Vector2(70, 44)
-		buy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		buy.disabled = state.buy_problem(item_id) != ""
-		buy.pressed.connect(_on_buy_pressed.bind(item_id))
-		row.add_child(buy)
+	_list.add_child(_heading("Sell back (half price, rounded down)"))
+	if player["hand"].is_empty():
+		_list.add_child(_gray("You aren't holding anything."))
+	for entry in player["hand"]:
+		_list.add_child(_sell_row(entry))
 
 
-func _on_buy_pressed(item_id: String) -> void:
-	if state.buy(item_id):
-		_status.text = "Bought %s." % ItemData.find(item_id)["name"]
-	_rebuild()
+func _buy_row(listing: Dictionary) -> Control:
+	var item: Dictionary = listing["item"]
+	var stock: int = listing["stock"]
+	var item_id: String = item["id"]
+	var cost_text := "%d gold" % item["cost"]
+	if item["passive"]:
+		cost_text += " (+%d to activate)" % GameState.ACTIVATION_FEE
+	var problem := state.buy_problem(item_id)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(info)
+	var name_label := Label.new()
+	name_label.text = "%s  -  %s  (%s)  -  %s" % [item["name"], cost_text,
+		ItemData.charge_text(item["charges"], item["unit"]),
+		"%d in stock" % stock if stock > 0 else "OUT OF STOCK"]
+	name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	name_label.custom_minimum_size = Vector2(340, 0)
+	info.add_child(name_label)
+	var description := _gray(item["description"])
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.custom_minimum_size = Vector2(340, 0)
+	info.add_child(description)
+	if problem != "":
+		var why := _gray(problem)
+		why.add_theme_color_override("font_color", Color("#D98C8C"))
+		info.add_child(why)
+
+	var buy := Button.new()
+	buy.text = "Buy"
+	buy.custom_minimum_size = Vector2(70, 44)
+	buy.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	buy.disabled = problem != ""
+	buy.pressed.connect(func() -> void:
+		if state.buy(item_id):
+			_status.text = "Bought %s." % item["name"]
+		_rebuild())
+	row.add_child(buy)
+	return row
+
+
+func _sell_row(entry: Dictionary) -> Control:
+	var item_id: String = entry["id"]
+	var item := ItemData.find(item_id)
+	var problem := state.sell_problem(item_id)
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 10)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(info)
+	var name_label := Label.new()
+	name_label.text = "%s  -  sells for %d gold" % [item["name"], ItemData.sell_price(item_id)]
+	info.add_child(name_label)
+	if problem != "":
+		var why := _gray(problem)
+		why.add_theme_color_override("font_color", Color("#D98C8C"))
+		info.add_child(why)
+
+	var sell := Button.new()
+	sell.text = "Sell"
+	sell.custom_minimum_size = Vector2(70, 44)
+	sell.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	sell.disabled = problem != ""
+	sell.pressed.connect(func() -> void:
+		if state.sell(item_id):
+			_status.text = "Sold %s." % item["name"]
+		_rebuild())
+	row.add_child(sell)
+	return row
+
+
+func _heading(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", 18)
+	return label
+
+
+func _gray(text: String) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_color_override("font_color", Color(0.75, 0.75, 0.75))
+	return label

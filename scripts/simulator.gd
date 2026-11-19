@@ -18,14 +18,14 @@ const SEAT_NAMES := ["Seat 1", "Seat 2", "Seat 3"]
 
 
 ## Plays `games` games and returns a summary Dictionary (see format_report).
-static func run_batch(games: int, bot: Bot, first_seed: int = 1, max_rounds: int = MAX_ROUNDS) -> Dictionary:
+static func run_batch(games: int, bot: Bot, first_seed: int = 1, max_rounds: int = MAX_ROUNDS, goblin: bool = true) -> Dictionary:
 	var rounds_list: Array = []
 	var wins_by_seat := [0, 0, 0]
 	var unfinished := 0
 	var totals := {"gold_gained": {}, "gold_lost": {}, "landings": {}, "shadow_spins": 0, "turns": 0}
 
 	for n in games:
-		var result := play_game(first_seed + n, bot, max_rounds)
+		var result := play_game(first_seed + n, bot, max_rounds, goblin)
 		if int(result["winner"]) >= 0:
 			rounds_list.append(result["rounds"])
 			wins_by_seat[result["winner"]] += 1
@@ -37,6 +37,7 @@ static func run_batch(games: int, bot: Bot, first_seed: int = 1, max_rounds: int
 	var finished := rounds_list.size()
 	var summary := {
 		"bot": "INFORMED" if bot == Bot.INFORMED else "RANDOM",
+		"goblin": goblin,
 		"games": games,
 		"finished": finished,
 		"unfinished": unfinished,
@@ -56,9 +57,10 @@ static func run_batch(games: int, bot: Bot, first_seed: int = 1, max_rounds: int
 
 
 ## Plays one game with all three seats controlled by the same kind of bot.
-static func play_game(seed_value: int, bot: Bot, max_rounds: int = MAX_ROUNDS) -> Dictionary:
+static func play_game(seed_value: int, bot: Bot, max_rounds: int = MAX_ROUNDS, goblin: bool = true) -> Dictionary:
 	var state := GameState.new()
 	state.setup(SEAT_NAMES, 12, seed_value)
+	state.goblin_enabled = goblin
 	var bot_rng := RandomNumberGenerator.new()
 	bot_rng.seed = GameState.derive_seed(seed_value, "bots")
 
@@ -78,7 +80,10 @@ static func play_game(seed_value: int, bot: Bot, max_rounds: int = MAX_ROUNDS) -
 	while state.winner < 0 and state.round_number <= max_rounds and action_budget > 0:
 		action_budget -= 1
 		if not state.pending.is_empty():
-			state.spin()
+			if state.pending.get("kind", "") == "wheel":
+				state.spin()
+			else:
+				state.resolve_choice(false)   # bots don't hold items, so just answer "no"
 		elif not state.legal_moves().is_empty():
 			state.move(_choose_direction(state, bot, bot_rng, maps))
 		else:
@@ -125,8 +130,8 @@ static func wheel_report() -> String:
 static func format_report(summary: Dictionary) -> String:
 	var games: int = summary["games"]
 	var lines: Array = []
-	lines.append("=== %s bots, %d games (Crown costs %d gold) ===" % [
-		summary["bot"], games, GameState.CROWN_GOLD_REQUIRED])
+	lines.append("=== %s bots, %d games, Goblin %s (Crown costs %d gold) ===" % [
+		summary["bot"], games, "ON" if summary.get("goblin", true) else "OFF", GameState.CROWN_GOLD_REQUIRED])
 	lines.append("Finished within %d rounds: %d of %d (%.0f%%)" % [
 		summary["max_rounds"], summary["finished"], games, 100.0 * int(summary["finished"]) / games])
 	if int(summary["finished"]) > 0:

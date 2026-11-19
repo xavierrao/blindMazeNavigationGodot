@@ -13,4 +13,6 @@ func _run() -> void:
 	print("")
 	print(Simulator.format_report(Simulator.run_batch(GAMES, Simulator.Bot.INFORMED)))
 	print("")
+	print(Simulator.format_report(Simulator.run_batch(GAMES, Simulator.Bot.INFORMED, 1, Simulator.MAX_ROUNDS, false)))
+	print("")
 	print(Simulator.format_report(Simulator.run_batch(GAMES, Simulator.Bot.RANDOM)))

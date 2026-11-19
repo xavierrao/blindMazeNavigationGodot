@@ -42,6 +42,8 @@ func _ready() -> void:
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var wheel_name: String = state.pending.get("wheel", "")
 	title.text = "%s - %s" % [state.current()["name"], WheelData.title(wheel_name)]
+	if state.pending.get("note", "") != "":
+		title.text += " (%s)" % state.pending["note"]
 	box.add_child(title)
 
 	_wheel = WheelView.new()
@@ -73,10 +75,10 @@ func _on_button_pressed() -> void:
 		queue_free()
 
 
-func _on_wheel_spun(_wheel_name: String, slices: Array, index: int) -> void:
+func _on_wheel_spun(_wheel_name: String, slices: Array, index: int, blocked: bool) -> void:
 	_spun = true
 	_wheel.spin_finished.connect(func() -> void:
-		_result.text = slices[index]["label"]
+		_result.text = slices[index]["label"] + ("  - blocked!" if blocked else "")
 		_button.text = "Continue"
 		_button.disabled = false)
 	_wheel.spin_to(index)

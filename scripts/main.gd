@@ -28,12 +28,17 @@ var _seed_edit: LineEdit
 var _pad_buttons := {}   # direction name -> Button
 var _end_button: Button
 var _shop_button: Button
+var _items_button: Button
 var _memory_check: CheckBox
 var _log_label: Label
 var _log: Array = []
 var _held_messages: Array = []   # messages held back while a wheel is spinning
 var _wheel_popup: WheelPopup
 var _shop_popup: ShopPopup
+var _items_popup: ItemsPopup
+var _choice_popup: ChoicePopup
+var _prompt_popup: ChoicePopup   # yes/no questions from the rules (like the Anchor's Teleport question)
+var _info_queue: Array = []   # private messages waiting to be shown: {"player": int, "text": String}
 var _overlay: Control
 
 
@@ -43,6 +48,7 @@ func _ready() -> void:
 	_build_ui()
 
 	state.message.connect(_on_message)
+	state.private_message.connect(_on_private_message)
 	state.changed.connect(_refresh)
 	_board.bind(state)
 	_board.tile_clicked.connect(_on_tile_clicked)
@@ -153,6 +159,12 @@ func _build_ui() -> void:
 	_shop_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_shop_button.pressed.connect(_on_shop_pressed)
 	action_row.add_child(_shop_button)
+	_items_button = Button.new()
+	_items_button.text = "Items"
+	_items_button.custom_minimum_size = Vector2(0, 46)
+	_items_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_items_button.pressed.connect(_on_items_pressed)
+	action_row.add_child(_items_button)
 
 	_memory_check = CheckBox.new()
 	_memory_check.text = "Memory Mode (spaces hide when left)"
@@ -219,11 +231,8 @@ func _refresh() -> void:
 	for i in state.players.size():
 		var player: Dictionary = state.players[i]
 		var line := "%s %s    Gold: %d" % [">" if i == state.current_player else " ", player["name"], player["gold"]]
-		var item_count := 0
-		for count in player["inventory"].values():
-			item_count += int(count)
-		if item_count > 0:
-			line += "    Items: %d" % item_count
+		if not player["hand"].is_empty():
+			line += "    Items: %d" % player["hand"].size()
 		if player["trapped"]:
 			line += "    (Shadow Realm)"
 		lines.append(line)
@@ -234,12 +243,15 @@ func _refresh() -> void:
 		(_pad_buttons[direction] as Button).disabled = not moves.has(direction)
 	_end_button.disabled = not state.can_end_turn()
 	_shop_button.disabled = not state.can_shop()
+	_items_button.text = "Items (%d)" % state.current()["hand"].size()
 	_memory_check.set_pressed_no_signal(state.memory_mode)
 
 	if state.winner >= 0:
 		_show_win()
 	elif state.pending.get("kind", "") == "wheel":
 		_open_wheel()
+	elif state.pending.get("kind", "") == "choice":
+		_open_prompt()
 
 
 func _on_message(text: String) -> void:
@@ -269,6 +281,27 @@ func _open_wheel() -> void:
 	add_child(_wheel_popup)
 
 
+# The rules are asking a yes/no question (right now only: "block this Teleport?").
+func _open_prompt() -> void:
+	if is_instance_valid(_prompt_popup):
+		return
+	var player_index: int = state.pending["player"]
+	var effect := state.active_effect(player_index, "anchor")
+	var left: int = effect.get("charges", 0)
+	_prompt_popup = ChoicePopup.new()
+	_prompt_popup.title = "%s - Teleporter!" % state.players[player_index]["name"]
+	_prompt_popup.body = "You landed on a Teleport space and will be thrown somewhere random. " \
+		+ "Use your Anchor to stay put? (%d %s left)" % [left, "block" if left == 1 else "blocks"]
+	_prompt_popup.options = [
+		{"label": "Block it (spend 1 charge)", "value": true},
+		{"label": "Let it teleport me", "value": false},
+	]
+	_prompt_popup.chosen.connect(func(accept: bool) -> void:
+		_prompt_popup = null
+		state.resolve_choice(accept))
+	add_child(_prompt_popup)
+
+
 func _on_wheel_closed() -> void:
 	_wheel_popup = null
 	for text in _held_messages:
@@ -288,6 +321,92 @@ func _on_shop_pressed() -> void:
 	add_child(_shop_popup)
 
 
+func _on_items_pressed() -> void:
+	if is_instance_valid(_items_popup):
+		return
+	_items_popup = ItemsPopup.new()
+	_items_popup.state = state
+	_items_popup.use_requested.connect(_on_use_requested)
+	_items_popup.activate_requested.connect(func(item_id: String) -> void:
+		_items_popup = null
+		state.activate_item(item_id))
+	_items_popup.closed.connect(func() -> void: _items_popup = null)
+	add_child(_items_popup)
+
+
+func _on_use_requested(item_id: String) -> void:
+	_items_popup = null
+	var item := ItemData.find(item_id)
+	if item["target"] == "direction":
+		_ask_direction(item_id)
+	elif item["target"] == "opponent":
+		var options := ItemEffects.target_options(state, item_id)
+		if options.size() == 1:
+			state.use_item(item_id, {"target": options[0]})
+		else:
+			_ask_target(item_id, options)
+	else:
+		state.use_item(item_id)
+
+
+func _ask_direction(item_id: String) -> void:
+	var options: Array = []
+	for direction in GameState.DIRECTIONS:
+		var label := ""
+		for i in direction.length():
+			if i > 0 and direction[i] == direction[i].to_upper():
+				label += " "
+			label += direction[i]
+		options.append({"label": label, "value": direction})
+	_choice_popup = ChoicePopup.new()
+	_choice_popup.title = "%s - choose a direction" % ItemData.find(item_id)["name"]
+	_choice_popup.options = options
+	_choice_popup.cancel_text = "Cancel"
+	_choice_popup.chosen.connect(func(direction: String) -> void:
+		_choice_popup = null
+		state.use_item(item_id, {"direction": direction})
+		_show_next_info())
+	_choice_popup.cancelled.connect(func() -> void: _choice_popup = null)
+	add_child(_choice_popup)
+
+
+func _ask_target(item_id: String, options: Array) -> void:
+	var choices: Array = []
+	for player_index in options:
+		choices.append({"label": state.players[player_index]["name"], "value": player_index})
+	_choice_popup = ChoicePopup.new()
+	_choice_popup.title = "%s - choose a target" % ItemData.find(item_id)["name"]
+	_choice_popup.options = choices
+	_choice_popup.cancel_text = "Cancel"
+	_choice_popup.chosen.connect(func(player_index: int) -> void:
+		_choice_popup = null
+		state.use_item(item_id, {"target": player_index})
+		_show_next_info())
+	_choice_popup.cancelled.connect(func() -> void: _choice_popup = null)
+	add_child(_choice_popup)
+
+
+# Information items answer privately. On one shared screen we show it in a
+# pop-up for the player who used it; in multiplayer it would go only to them.
+func _on_private_message(player_index: int, text: String) -> void:
+	_info_queue.append({"player": player_index, "text": text})
+	_show_next_info()
+
+
+func _show_next_info() -> void:
+	if _info_queue.is_empty() or is_instance_valid(_choice_popup):
+		return
+	var info: Dictionary = _info_queue.pop_front()
+	_choice_popup = ChoicePopup.new()
+	_choice_popup.title = "Private - only %s should look!" % state.players[info["player"]]["name"]
+	_choice_popup.body = info["text"]
+	_choice_popup.options = [{"label": "Got it", "value": null}]
+	_choice_popup.chosen.connect(func(_value: Variant) -> void:
+		_choice_popup = null
+		_show_next_info())
+	add_child(_choice_popup)
+
+
 func _show_win() -> void:
 	if is_instance_valid(_overlay):
 		return
@@ -300,11 +419,15 @@ func _show_win() -> void:
 
 # Starts a fresh game. A number in the seed box replays that seed; blank is random.
 func _start_new_game() -> void:
-	for popup in [_wheel_popup, _shop_popup]:
+	for popup in [_wheel_popup, _shop_popup, _items_popup, _choice_popup, _prompt_popup]:
 		if is_instance_valid(popup):
 			popup.queue_free()
 	_wheel_popup = null
 	_shop_popup = null
+	_items_popup = null
+	_choice_popup = null
+	_prompt_popup = null
+	_info_queue.clear()
 	_log.clear()
 	_held_messages.clear()
 	var seed_value := -1
@@ -336,7 +459,7 @@ func _show_map_overlay(title: String, button_text: String, on_press: Callable) -
 	_overlay.add_child(button)
 	button.set_anchors_and_offsets_preset(Control.PRESET_TOP_RIGHT, Control.PRESET_MODE_MINSIZE, 12)
 	add_child(_overlay)
-	reveal.show_map(state.spaces, state.players, false)
+	reveal.show_map(state.spaces, state.players, false, state.goblin_space)
 
 
 # ---------------------------------------------------------------------------
