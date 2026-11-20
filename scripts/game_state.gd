@@ -206,10 +206,17 @@ func can_end_turn() -> bool:
 
 
 ## The slices of the wheel that is waiting to be spun ([] if none).
+## Which player the waiting wheel or question belongs to. Usually the player whose
+## turn it is, but a Chaos Swap can make someone land on a wheel space during
+## another player's turn.
+func pending_player() -> int:
+	return int(pending.get("player", current_player))
+
+
 func pending_slices() -> Array:
 	if pending.get("kind", "") != "wheel":
 		return []
-	return WheelData.get_wheel(pending["wheel"], current()["shadow_spins"])
+	return WheelData.get_wheel(pending["wheel"], players[pending_player()]["shadow_spins"])
 
 
 func can_shop() -> bool:
@@ -382,22 +389,24 @@ func move(direction: String) -> bool:
 func spin() -> bool:
 	if pending.get("kind", "") != "wheel":
 		return false
+	var who := pending_player()
 	var wheel_name: String = pending["wheel"]
 	var slices := pending_slices()
 	var index := rng.randi_range(0, slices.size() - 1)
 	var slice: Dictionary = slices[index]
 	var source := str(pending.get("source", "game"))
-	var will_be_blocked := wheel_name != "shadow" and _slice_is_harmful(current_player, slice) \
-		and not active_effect(current_player, _guard_item(source)).is_empty()
+	var will_be_blocked := wheel_name != "shadow" and _slice_is_harmful(who, slice) \
+		and not active_effect(who, _guard_item(source)).is_empty()
 
 	pending = {}
-	has_moved = true   # spinning uses up the turn's move/spin
+	if who == current_player:
+		has_moved = true   # spinning uses up the turn's move/spin
 	if wheel_name == "shadow":
-		current()["shadow_spins"] = int(current()["shadow_spins"]) + 1
+		players[who]["shadow_spins"] = int(players[who]["shadow_spins"]) + 1
 		stats["shadow_spins"] = int(stats["shadow_spins"]) + 1
 
 	wheel_spun.emit(wheel_name, slices, index, will_be_blocked)
-	_apply_slice(current_player, slice, wheel_name, source)
+	_apply_slice(who, slice, wheel_name, source)
 	_advance_pending()
 	changed.emit()
 	return true
@@ -515,9 +524,9 @@ func _land(player_index: int, target: int, prefix: String, start_bonus: bool = t
 		"Neutral":
 			_prospectors_pick_bonus(player_index)
 		"Good":
-			_queue_pending({"kind": "wheel", "wheel": "good"})
+			_queue_pending({"kind": "wheel", "wheel": "good", "player": player_index})
 		"Bad":
-			_queue_pending({"kind": "wheel", "wheel": "bad"})
+			_queue_pending({"kind": "wheel", "wheel": "bad", "player": player_index})
 		"Teleport":
 			if active_effect(player_index, "anchor").is_empty():
 				_teleport(player_index)
@@ -787,6 +796,28 @@ func _goblin_collide() -> void:
 
 
 # ---------------------------------------------------------------------------
+# Chaos Swap
+# ---------------------------------------------------------------------------
+
+## Two players trade places and each then "lands" on their new space (its effect,
+## traps, bounty gold and the Goblin all apply). `user` is who played the item:
+## they can't block their own swap, but the Warding Talisman of either OTHER
+## swapped player stops the whole thing. Returns false if it was blocked.
+func swap_players(a: int, b: int, user: int) -> bool:
+	for swapped in [a, b]:
+		if swapped != user and _try_block(swapped, "player", "the Chaos Swap"):
+			return false
+	var space_a: int = players[a]["position"]
+	var space_b: int = players[b]["position"]
+	players[a]["position"] = space_b
+	players[b]["position"] = space_a
+	_land(a, space_b, "%s swapped places with %s and " % [players[a]["name"], players[b]["name"]])
+	if winner < 0:
+		_land(b, space_a, "%s swapped places with %s and " % [players[b]["name"], players[a]["name"]])
+	return true
+
+
+# ---------------------------------------------------------------------------
 # Bounty Drop gold
 # ---------------------------------------------------------------------------
 
@@ -811,6 +842,8 @@ func _collect_bounty(player_index: int, space_id: int) -> void:
 # Something needs the player's attention. If something is already waiting, it
 # goes to the back of the line. (Wheels and prompts belong to the current player.)
 func _queue_pending(entry: Dictionary) -> void:
+	if not entry.has("player"):
+		entry["player"] = current_player
 	if pending.is_empty():
 		pending = entry
 	else:
@@ -875,10 +908,8 @@ func _trigger_trap(player_index: int, space_id: int) -> void:
 				message.emit("%s loses %d gold and the coin spins the Bad wheel!" % [victim["name"], lost])
 			else:
 				message.emit("The coin spins the Bad wheel for %s!" % victim["name"])
-			# Wheels belong to the current player; landing on someone else's
-			# turn (Chaos Swap) will need that extended.
-			if player_index == current_player:
-				_queue_pending({"kind": "wheel", "wheel": "bad", "source": "player", "note": "Cursed Coin"})
+			_queue_pending({"kind": "wheel", "wheel": "bad", "source": "player",
+				"note": "Cursed Coin", "player": player_index})
 
 
 # The Mud Trap takes the player's NEXT move: the one they haven't made yet this
@@ -1095,7 +1126,9 @@ func _trap(player_index: int) -> void:
 	var player: Dictionary = players[player_index]
 	player["trapped"] = true
 	player["shadow_spins"] = 0   # being sent/landing here does not count as a spin
-	pending_queue.clear()        # whatever the old space had in store no longer applies
+	# Whatever the old space had in store for this player no longer applies.
+	pending_queue = pending_queue.filter(func(entry: Dictionary) -> bool:
+		return int(entry.get("player", current_player)) != player_index)
 	if player_index == current_player:
 		_queue_pending({"kind": "wheel", "wheel": "shadow"})
 

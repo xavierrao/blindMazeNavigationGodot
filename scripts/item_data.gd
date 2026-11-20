@@ -98,7 +98,7 @@ const ITEMS := [
 		"description": "Trap on your space. The next player to land there loses 1 gold and spins the Bad wheel."},
 	{"id": "chaos_swap", "name": "Chaos Swap", "category": "Interference", "cost": 3,
 		"charges": 1, "unit": "uses", "passive": false, "pool": "random",
-		"target": "swap", "never_with": [], "implemented": false,
+		"target": "swap", "never_with": [], "implemented": true,
 		"description": "Swap places with a chosen player, or swap the other two players."},
 	{"id": "pickpocket", "name": "Pickpocket", "category": "Interference", "cost": 2,
 		"charges": 2, "unit": "uses", "passive": false, "pool": "random",

@@ -62,6 +62,15 @@ static func problem(state: GameState, item_id: String, params: Dictionary) -> St
 				var chosen: int = int(params["target"]) if params.has("target") else options[0]
 				if bounty_options(state, chosen).is_empty():
 					return "There is no space near them to put the gold on."
+		"chaos_swap":
+			var pairs := swap_options(state)
+			if pairs.is_empty():
+				return "There is nobody you can swap with."
+			if params.has("pair"):
+				if not _pairs_contain(pairs, params["pair"]):
+					return "That swap isn't possible."
+			elif pairs.size() > 1:
+				return "Choose a swap first."
 	return ""
 
 
@@ -170,6 +179,13 @@ static func use(state: GameState, player_index: int, item_id: String, params: Di
 			state.place_bounty(place, BOUNTY_GOLD)
 			state.message.emit("%d gold has been placed near %s." % [BOUNTY_GOLD, state.players[near]["name"]])
 
+		"chaos_swap":
+			var swaps := swap_options(state)
+			var pair: Array = params["pair"] if params.has("pair") else swaps[0]
+			var low := mini(int(pair[0]), int(pair[1]))
+			var high := maxi(int(pair[0]), int(pair[1]))
+			state.swap_players(low, high, player_index)
+
 		"skeleton_key":
 			var direction := str(params["direction"])
 			var target := GameState.neighbor_in_direction(position, direction)
@@ -180,6 +196,33 @@ static func use(state: GameState, player_index: int, item_id: String, params: Di
 				state.message.emit("The Skeleton Key finds nothing to open that way.")
 			else:
 				state._land(player_index, target, "%s unlocked the way %s and " % [who, direction])
+
+
+## The swaps Chaos Swap can do, as [a, b] pairs of player indices (a < b): you with
+## either opponent, or the two opponents with each other. Both players must be
+## free (not trapped), neither on the Crown, and standing on different spaces.
+static func swap_options(state: GameState) -> Array:
+	var pairs: Array = []
+	for a in state.players.size():
+		for b in range(a + 1, state.players.size()):
+			var first: Dictionary = state.players[a]
+			var second: Dictionary = state.players[b]
+			if first["trapped"] or second["trapped"] or first["position"] == second["position"]:
+				continue
+			if state.space_type(int(first["position"])) == "Crown" \
+					or state.space_type(int(second["position"])) == "Crown":
+				continue
+			pairs.append([a, b])
+	return pairs
+
+
+static func _pairs_contain(pairs: Array, pair: Array) -> bool:
+	var low := mini(int(pair[0]), int(pair[1]))
+	var high := maxi(int(pair[0]), int(pair[1]))
+	for candidate in pairs:
+		if int(candidate[0]) == low and int(candidate[1]) == high:
+			return true
+	return false
 
 
 ## Which players the current player can aim an item at (a list of player indices).

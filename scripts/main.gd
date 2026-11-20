@@ -339,6 +339,12 @@ func _on_use_requested(item_id: String) -> void:
 	var item := ItemData.find(item_id)
 	if item["target"] == "direction":
 		_ask_direction(item_id)
+	elif item["target"] == "swap":
+		var swaps := ItemEffects.swap_options(state)
+		if swaps.size() == 1:
+			state.use_item(item_id, {"pair": swaps[0]})
+		else:
+			_ask_swap(item_id, swaps)
 	elif item["target"] == "opponent":
 		var options := ItemEffects.target_options(state, item_id)
 		if options.size() == 1:
@@ -365,6 +371,31 @@ func _ask_direction(item_id: String) -> void:
 	_choice_popup.chosen.connect(func(direction: String) -> void:
 		_choice_popup = null
 		state.use_item(item_id, {"direction": direction})
+		_show_next_info())
+	_choice_popup.cancelled.connect(func() -> void: _choice_popup = null)
+	add_child(_choice_popup)
+
+
+func _ask_swap(item_id: String, pairs: Array) -> void:
+	var choices: Array = []
+	for pair in pairs:
+		var a: int = pair[0]
+		var b: int = pair[1]
+		var label := ""
+		if a == state.current_player:
+			label = "Swap places with %s" % state.players[b]["name"]
+		elif b == state.current_player:
+			label = "Swap places with %s" % state.players[a]["name"]
+		else:
+			label = "Swap %s and %s" % [state.players[a]["name"], state.players[b]["name"]]
+		choices.append({"label": label, "value": pair})
+	_choice_popup = ChoicePopup.new()
+	_choice_popup.title = "%s - choose a swap" % ItemData.find(item_id)["name"]
+	_choice_popup.options = choices
+	_choice_popup.cancel_text = "Cancel"
+	_choice_popup.chosen.connect(func(pair: Array) -> void:
+		_choice_popup = null
+		state.use_item(item_id, {"pair": pair})
 		_show_next_info())
 	_choice_popup.cancelled.connect(func() -> void: _choice_popup = null)
 	add_child(_choice_popup)

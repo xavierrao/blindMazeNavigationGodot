@@ -103,6 +103,9 @@ func _draw_face_up(center: Vector2, radius: float, type_name: String, font_size:
 
 
 func _draw_face_down(center: Vector2, radius: float) -> void:
+	# Use the hidden-space artwork (res://art/spaces/hidden.png) if it exists.
+	if SpaceArt.draw_space(self, "Hidden", center, radius * 2.0):
+		return
 	draw_circle(center, radius, HIDDEN_FILL)
 	draw_arc(center, radius, 0.0, TAU, 48, HIDDEN_BORDER, 3.0, true)
 	_draw_text_lines(center - Vector2(0.0, _cell * 0.05), "?", int(_cell * 0.4), Color(1, 1, 1, 0.35))

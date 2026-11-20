@@ -16,9 +16,10 @@ const SLOTS_PER_SHOP := 4
 ## How many random items to draw from each category.
 const RANDOM_QUOTAS := {"Economy": 1, "Information": 2, "Interference": 2, "Movement": 2}
 
-## While some items aren't built yet, only stock items that work. Any quota or
-## guaranteed item that can't be filled is replaced by other working items, so
-## every shop still has 4. Turn this off once every item is implemented.
+## If an item is marked as not built yet in item_data.gd, leave it out of the shops
+## and fill its slot with another working item, so every shop still has 4. All
+## items are built now, so this changes nothing today - it just means a new
+## unfinished item can sit in item_data.gd without ending up for sale.
 static var only_implemented := true
 
 

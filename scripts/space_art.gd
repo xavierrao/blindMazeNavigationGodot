@@ -17,6 +17,8 @@ const FILES := {
 	"Shadow Realm": "shadow_realm.png",
 	"Combat": "combat.png",
 	"Teleport": "teleport.png",
+	# Not a real space type: the picture for a face-down (hidden) space.
+	"Hidden": "hidden.png",
 }
 
 ## How the pictures are smoothed when drawn smaller than they really are.

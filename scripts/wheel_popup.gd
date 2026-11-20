@@ -41,7 +41,7 @@ func _ready() -> void:
 	title.add_theme_font_size_override("font_size", 24)
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	var wheel_name: String = state.pending.get("wheel", "")
-	title.text = "%s - %s" % [state.current()["name"], WheelData.title(wheel_name)]
+	title.text = "%s - %s" % [state.players[state.pending_player()]["name"], WheelData.title(wheel_name)]
 	if state.pending.get("note", "") != "":
 		title.text += " (%s)" % state.pending["note"]
 	box.add_child(title)

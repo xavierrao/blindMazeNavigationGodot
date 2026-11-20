@@ -124,7 +124,8 @@ func _hand_row(entry: Dictionary) -> Control:
 	var is_passive: bool = item["passive"]
 	var problem := state.activate_problem(item_id) if is_passive else state.use_problem(item_id)
 	# Items that need a choice (like a direction) are checked again after choosing.
-	if problem == "Choose a direction first." or problem == "Choose a target first.":
+	if problem == "Choose a direction first." or problem == "Choose a target first." \
+			or problem == "Choose a swap first.":
 		problem = ""
 	if problem != "":
 		var why := _gray_label(problem)
