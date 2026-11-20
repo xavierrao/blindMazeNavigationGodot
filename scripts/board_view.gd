@@ -10,7 +10,6 @@ const GRID_SIZE := 5
 const BG_COLOR := Color("#F5F5DC")
 const HIDDEN_FILL := Color("#3E4261")
 const HIDDEN_BORDER := Color("#2A2D45")
-const HIGHLIGHT := Color("#FFC400")
 
 var state: GameState
 
@@ -71,7 +70,6 @@ func _draw() -> void:
 	_update_layout()
 	var font_size := int(clampf(_cell * 0.17, 9.0, 28.0))
 	var radius := _cell * 0.44
-	var hint_targets := _adjacent_targets()
 	var current_pos: int = state.current()["position"]
 	var current_color: Color = MapReveal.PLAYER_COLORS[
 		state.current_player % MapReveal.PLAYER_COLORS.size()]
@@ -82,9 +80,6 @@ func _draw() -> void:
 			_draw_face_up(center, radius, state.space_type(id), font_size)
 		else:
 			_draw_face_down(center, radius)
-		if hint_targets.has(id):
-			draw_circle(center, radius, Color(HIGHLIGHT, 0.18))
-			draw_arc(center, radius, 0.0, TAU, 48, HIGHLIGHT, 5.0, true)
 		if id == current_pos:
 			draw_arc(center, radius + 3.0, 0.0, TAU, 48, current_color, 5.0, true)
 
@@ -109,19 +104,6 @@ func _draw_face_down(center: Vector2, radius: float) -> void:
 	draw_circle(center, radius, HIDDEN_FILL)
 	draw_arc(center, radius, 0.0, TAU, 48, HIDDEN_BORDER, 3.0, true)
 	_draw_text_lines(center - Vector2(0.0, _cell * 0.05), "?", int(_cell * 0.4), Color(1, 1, 1, 0.35))
-
-
-# Adjacent spaces the current player can step to. Long-distance exits are not
-# highlighted - those are only available from the direction pad.
-func _adjacent_targets() -> Dictionary:
-	var result := {}
-	var moves := state.legal_moves()
-	var from: int = state.current()["position"]
-	for direction in moves:
-		var target: int = moves[direction]
-		if GameState.distance(from, target) <= 1:
-			result[target] = true
-	return result
 
 
 func _draw_tokens() -> void:
